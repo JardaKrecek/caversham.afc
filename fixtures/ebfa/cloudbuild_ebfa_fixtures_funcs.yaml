@@ -1,0 +1,11 @@
+steps:
+- name: 'gcr.io/cloud-builders/gcloud'
+  args:
+  - functions
+  - deploy
+  - ebfa-fixtures-change-detect
+  - --region=us-east1
+  - --entry-point=fixtures_check
+  - --trigger-topic=fixtures-change-detect
+  - --runtime=python37
+  - --source=./ebfa_fixtures_change_detect
