@@ -1,0 +1,11 @@
+steps:
+- name: 'gcr.io/cloud-builders/gcloud'
+  args:
+  - functions
+  - deploy
+  - topic_to_twitter_dm
+  - --region=us-east1
+  - --entry-point=topic_to_twitter
+  - --trigger-topic=fixtures-changed
+  - --runtime=python37
+  - --source=./topic_text_to_twitter_dm
