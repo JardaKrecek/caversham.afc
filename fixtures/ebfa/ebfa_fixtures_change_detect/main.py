@@ -7,7 +7,9 @@ import pandas as pd
 
 # Imports the Google Cloud client library
 from google.cloud import storage
+from google.cloud import pubsub_v1
 
+import base64
 
 def getWebpage(url: str) -> BeautifulSoup:
     """Opens url and returns web page in BeautifulSoup.
@@ -103,6 +105,19 @@ def getGroupFixtures(eventId: str, groupId: str) -> pd.DataFrame:
     return(df)
 
 
+def publish_fixtures_change_msg(sChangesBlob: str):
+
+    project_id = 'cavershamafc'
+    topic_id = 'fixtures-changed'
+    
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(project_id, topic_id)
+    
+    publisher.publish(topic_path, sChangesBlob.encode('utf-8'))
+
+    return
+
+
 def fixtures_check(event, context):
     """Triggered from a message on a Cloud Pub/Sub topic.
     Args:
@@ -114,6 +129,13 @@ def fixtures_check(event, context):
 
     columnDTypes = {'MatchId':str, 'Date':str, 'Home':str, 'HG':str, 'AG':str, 
                     'Away':str, 'Notes':str}
+
+    testMode = False
+    if 'data' in event:
+        if base64.b64decode(event['data']).decode('utf-8') == 'Test':
+            testMode = True
+            print ('Running in test mode.')
+
 
     sEventId = '4389'
     sGroupId = '7590'
@@ -152,17 +174,13 @@ def fixtures_check(event, context):
         print(f'Detected changes. Saving to {sUpdatedOutBlob}')
         
         dfChangeLog2.to_csv(sUpdatedOutBlob)
-
-        # dfCurrent.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-LatestFixtures.csv')
-        dfCurrent.to_csv(sLastBlob_uri)
-        print(f'{sLastBlob_uri} updated. Changes saved to {sUpdatedOutBlob}')
-
-
-"""    
-    if 'data' in event:
-        filename = base64.b64decode(event['data']).decode('utf-8')
-        temp = pd.read_csv(filename, encoding='utf-8')
-        print (temp.head())
-    else:
-        print('No data passed in.')
-"""
+       
+        if testMode == True:
+            print('Bypassing update of latest fixtures blob.')
+        else:
+            # dfCurrent.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-LatestFixtures.csv')
+            dfCurrent.to_csv(sLastBlob_uri)
+            print(f'{sLastBlob_uri} updated. Changes saved to {sUpdatedOutBlob}')
+        
+        # Broadcast message to PubSub topic
+        publish_fixtures_change_msg(sUpdatedOutBlob)

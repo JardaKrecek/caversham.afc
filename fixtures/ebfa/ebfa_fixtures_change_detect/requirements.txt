@@ -1,6 +1,7 @@
 # Function dependencies, for example:
 # package>=version
 google-cloud-storage==1.30.0
+google-cloud-pubsub
 gcsfs==0.6.2
 pandas==1.1.0
 beautifulsoup4==4.9.3
