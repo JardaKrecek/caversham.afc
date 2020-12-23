@@ -1,15 +1,11 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Nov 26 21:10:50 2020
+import ebfa_core
 
-@author: JK-MBPro
-"""
-
-import gotfootball_event
 from datetime import datetime
 from bs4 import BeautifulSoup
 import pandas as pd
+
+# Imports the Google Cloud client library
+from google.cloud import storage
 
 def gameTimeCellToNotes(dataCell: BeautifulSoup) -> str:
     """Gets data from div tags.
@@ -25,25 +21,13 @@ def gameTimeCellToNotes(dataCell: BeautifulSoup) -> str:
             sMatchNotes += sPart.strip()+' | '
             
     return sMatchNotes[:-3]
-            
-
-
-# https://www.gotfootball.co.uk/events/schedule.aspx?EventID=4389&GroupID=7590&print=true
-urlSite='https://www.gotfootball.co.uk'
-sEventId = '4389'
-sGroupId = '7590'
-
-columnNames = ['MatchId', 'Date', 'Home', 'HG', 'AG', 'Away', 'Notes']
-columnDTypes = {'MatchId':str, 'Date':str, 'Home':str, 'HG':str, 'AG':str, 
-                'Away':str, 'Notes':str}
-
-sOutFolder = './data/'
 
 def getGroupFixtures(eventId: str, groupId: str) -> pd.DataFrame:
+    urlSite='https://www.gotfootball.co.uk'
     urlEvent=urlSite+'/events/schedule.aspx?EventID='+eventId
     urlGroup=urlEvent+'&GroupID='+groupId+'&print=true'
     
-    bsGroupFixtures=gotfootball_event.getWebpage(urlGroup)
+    bsGroupFixtures = ebfa_core.getWebpage(urlGroup)
 
     fixtures = []
     
@@ -89,36 +73,73 @@ def getGroupFixtures(eventId: str, groupId: str) -> pd.DataFrame:
                              sScores[1], sAwayTeam, 
                              sMatchNotes])
 
+    columnNames = ['MatchId', 'Date', 'Home', 'HG', 'AG', 'Away', 'Notes']
+
     df = pd.DataFrame(fixtures, columns=columnNames)
     df.set_index('MatchId', inplace=True)
     return(df)
-    
-
-dfLast = pd.read_csv(sOutFolder+sEventId+'-'+sGroupId+'-LatestFixtures.csv', 
-                       dtype=columnDTypes)
-dfLast.set_index('MatchId', inplace=True)
-dfLast.sort_index(inplace=True)
-
-dfCurrent = getGroupFixtures(sEventId, sGroupId)
-dfCurrent.sort_index(inplace=True)
 
 
-dfChanges = dfLast.compare(dfCurrent, keep_shape=False, keep_equal=False)
-if dfChanges.empty:
-    print('No changes')
-else:
-    print(dfChanges.columns)
-    dfChanges.columns = [f'{f}_old' if s == 'self' else (f'{f}_new' if s == 'other' else f'{f}') for f, s in dfChanges.columns]
-    
-    sTimestamp = datetime.now().strftime('%Y-%m-%dT%H%M%S')
-    dfChanges.insert(0, 'Updated', sTimestamp)
-    dfChangeLog = dfChanges.join(dfLast)
-    dfChangeLog2 = dfChangeLog.append(dfChanges.join(dfCurrent))
-    dfChangeLog2.sort_index(inplace=True)
-    print(dfChangeLog2)
-    dfChangeLog2.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-'+sTimestamp+'-Updates.csv')
+def fixtures_check(event, context):
+    """Triggered from a message on a Cloud Pub/Sub topic.
+    Args:
+         event (dict): Event payload.
+         context (google.cloud.functions.Context): Metadata for the event.
+    """
+
+    print("This Function was triggered by messageId {} published at {}".format(context.event_id, context.timestamp))
+
+    columnDTypes = {'MatchId':str, 'Date':str, 'Home':str, 'HG':str, 'AG':str, 
+                    'Away':str, 'Notes':str}
+
+    sEventId = '4389'
+    sGroupId = '7590'
+
+    sBucketUrl='ebfa_fixtures'
+    sBlobName='4389-7590-LatestFixtures.csv'
+    sLastBlob_uri = f'gs://{sBucketUrl}/{sBlobName}'
+
+    # it is mandatory initialize the storage client
+    storage_client = storage.Client()
+
+    dfLast = pd.read_csv(sLastBlob_uri, dtype=columnDTypes)
+
+    dfLast.set_index('MatchId', inplace=True)
+    dfLast.sort_index(inplace=True)
+
+    dfCurrent = getGroupFixtures(sEventId, sGroupId)
+    dfCurrent.sort_index(inplace=True)
 
 
+    dfChanges = dfLast.compare(dfCurrent, keep_shape=False, keep_equal=False)
+    if dfChanges.empty:
+        print('No changes')
+    else:
+        dfChanges.columns = [f'{f}_old' if s == 'self' else (f'{f}_new' if s == 'other' else f'{f}') for f, s in dfChanges.columns]
+        
+        sTimestamp = datetime.now().strftime('%Y-%m-%dT%H%M%S')
+        dfChanges.insert(0, 'Updated', sTimestamp)
+        dfChangeLog = dfChanges.join(dfLast)
+        dfChangeLog2 = dfChangeLog.append(dfChanges.join(dfCurrent))
+        dfChangeLog2.sort_index(inplace=True)
 
-dfCurrent.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-LatestFixtures.csv')
+        # dfChangeLog2.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-'+sTimestamp+'-Updates.csv')
+        sUpdatedOutBlob = 'gs://'+sBucketUrl+'/'+sEventId+'-'+sGroupId+'-'+sTimestamp+'-Updates.csv'
+        
+        print(f'Detected changes. Saving to {sUpdatedOutBlob}')
+        
+        dfChangeLog2.to_csv(sUpdatedOutBlob)
 
+        # dfCurrent.to_csv(sOutFolder+sEventId+'-'+sGroupId+'-LatestFixtures.csv')
+        dfCurrent.to_csv(sLastBlob_uri)
+        print(f'{sLastBlob_uri} updated. Changes saved to {sUpdatedOutBlob}')
+
+
+"""    
+    if 'data' in event:
+        filename = base64.b64decode(event['data']).decode('utf-8')
+        temp = pd.read_csv(filename, encoding='utf-8')
+        print (temp.head())
+    else:
+        print('No data passed in.')
+"""
